@@ -1,6 +1,7 @@
 {
   "name": "now-bot-atenos",
   "version": "1.0.0",
+  "type": "module",
   "description": "Aternos Anti-AFK Bot",
   "main": "server.js",
   "scripts": {
@@ -9,6 +10,7 @@
   "dependencies": {
     "express": "^4.18.2",
     "mineflayer": "^4.10.0",
-    "socket.io": "^4.6.1"
+    "socket.io": "^4.6.1",
+    "uuid": "^9.0.0"
   }
 }
