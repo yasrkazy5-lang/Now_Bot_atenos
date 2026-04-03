@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>⛏️ Minecraft Bot Manager</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Socket.io CDN (loaded from the server itself at runtime) -->
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<div class="wrapper">
+
+  <!-- ══ HEADER ════════════════════════════════════════════════════ -->
+  <header>
+    <div class="header-brand">
+      <div class="brand-icon">⛏️</div>
+      <div>
+        <h1>Bot Manager</h1>
+        <div class="subtitle">Real Mineflayer · Socket.io Live Feed</div>
+      </div>
+    </div>
+    <div class="conn-pill" id="conn-pill">
+      <span class="dot"></span>
+      <span id="conn-label">Connecting…</span>
+    </div>
+  </header>
+
+  <!-- ══ STATS BAR ══════════════════════════════════════════════════ -->
+  <div class="stats-bar">
+    <div class="glass stat-card">
+      <span class="stat-label">Total Bots</span>
+      <span class="stat-value" id="stat-total">0</span>
+    </div>
+    <div class="glass stat-card">
+      <span class="stat-label">Online</span>
+      <span class="stat-value" id="stat-online" style="color:#6ee7b7;-webkit-text-fill-color:#6ee7b7">0</span>
+    </div>
+    <div class="glass stat-card">
+      <span class="stat-label">Connecting</span>
+      <span class="stat-value" id="stat-connecting" style="color:#fcd34d;-webkit-text-fill-color:#fcd34d">0</span>
+    </div>
+    <div class="glass stat-card">
+      <span class="stat-label">Offline / Error</span>
+      <span class="stat-value" id="stat-offline" style="color:#9ca3af;-webkit-text-fill-color:#9ca3af">0</span>
+    </div>
+  </div>
+
+  <!-- ══ ADD BOT FORM ════════════════════════════════════════════════ -->
+  <section class="add-bot-section">
+    <h2>⚡ Deploy New Bot</h2>
+    <div class="glass">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="inp-username" placeholder="BotAlpha" maxlength="16" />
+        </div>
+        <div class="form-group">
+          <label>Server IP</label>
+          <input type="text" id="inp-host" placeholder="mc.hypixel.net" />
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input type="number" id="inp-port" placeholder="25565" value="25565" min="1" max="65535" />
+        </div>
+        <div class="form-group">
+          <label>MC Version</label>
+          <select id="inp-version">
+            <option value="1.20.1">1.20.1</option>
+            <option value="1.20.4">1.20.4</option>
+            <option value="1.19.4">1.19.4</option>
+            <option value="1.19.2">1.19.2</option>
+            <option value="1.18.2">1.18.2</option>
+            <option value="1.17.1">1.17.1</option>
+            <option value="1.16.5">1.16.5</option>
+            <option value="1.12.2">1.12.2</option>
+            <option value="1.8.9">1.8.9</option>
+          </select>
+        </div>
+        <div class="form-group" style="justify-content:flex-end;">
+          <button class="btn btn-primary" id="btn-add-bot" onclick="addBot()">
+            <span>🚀</span> Deploy Bot
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ BOTS GRID ══════════════════════════════════════════════════ -->
+  <section class="bots-section">
+    <h2>🤖 Active Bots</h2>
+    <div class="bots-grid" id="bots-grid">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">🤖</div>
+        <h3>No Bots Deployed</h3>
+        <p>Fill in the form above and click <strong>Deploy Bot</strong> to start a real Mineflayer instance.</p>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /wrapper -->
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+//  Dashboard Script — Real Socket.io connection, zero hardcoded data
+// ══════════════════════════════════════════════════════════════════════
+
+const socket = io();          // connects to the same host/port automatically
+const botStore = {};          // id → { meta, status, health, food, position }
+
+// ── Connection state ──────────────────────────────────────────────────
+socket.on('connect', () => {
+  setConnPill(true);
+  toast('✅ Connected to Bot Manager server', 'success');
+});
+socket.on('disconnect', () => {
+  setConnPill(false);
+  toast('⚠️ Disconnected from server', 'error');
+});
+
+function setConnPill(connected) {
+  const pill  = document.getElementById('conn-pill');
+  const label = document.getElementById('conn-label');
+  pill.classList.toggle('connected', connected);
+  label.textContent = connected ? 'Server Connected' : 'Disconnected';
+}
+
+// ── Receive persisted bot list on connect ─────────────────────────────
+socket.on('bot-list', (bots) => {
+  bots.forEach(b => {
+    if (!botStore[b.id]) {
+      botStore[b.id] = { ...b, status: 'connecting', health: 0, food: 0, position: {x:0,y:0,z:0} };
+      renderBotCard(b.id);
+    }
+  });
+  updateStats();
+});
+
+// ── Bot added (from any client) ───────────────────────────────────────
+socket.on('bot-added', (data) => {
+  if (botStore[data.id]) return;
+  botStore[data.id] = { ...data, status: 'connecting', health: 0, food: 0, position: {x:0,y:0,z:0} };
+  renderBotCard(data.id);
+  updateStats();
+  toast(`🚀 Bot <strong>${data.username}</strong> deploying → ${data.host}:${data.port}`, 'success');
+});
+
+// ── REAL bot update from Mineflayer events ────────────────────────────
+socket.on('bot-update', (data) => {
+  if (!botStore[data.id]) {
+    // Bot exists on server but not yet in our store (e.g. page reload race)
+    botStore[data.id] = { ...data };
+    renderBotCard(data.id);
+  }
+
+  const prev = botStore[data.id];
+  botStore[data.id] = { ...prev, ...data };
+
+  updateBotCard(data.id);
+  updateStats();
+});
+
+// ── Bot removed ───────────────────────────────────────────────────────
+socket.on('bot-removed', ({ id }) => {
+  delete botStore[id];
+  const card = document.getElementById(`card-${id}`);
+  if (card) {
+    card.style.opacity = '0';
+    card.style.transform = 'scale(0.95)';
+    card.style.transition = 'all 0.3s';
+    setTimeout(() => card.remove(), 300);
+  }
+  updateStats();
+  toast('🗑️ Bot removed', 'success');
+});
+
+// ── Error messages ────────────────────────────────────────────────────
+socket.on('error-msg', ({ message }) => {
+  toast(`❌ ${message}`, 'error');
+});
+
+// ══ ADD BOT ════════════════════════════════════════════════════════════
+function addBot() {
+  const username = document.getElementById('inp-username').value.trim();
+  const host     = document.getElementById('inp-host').value.trim();
+  const port     = document.getElementById('inp-port').value.trim() || '25565';
+  const version  = document.getElementById('inp-version').value;
+
+  if (!username) { toast('❌ Username is required', 'error'); return; }
+  if (!host)     { toast('❌ Server IP is required', 'error'); return; }
+
+  socket.emit('add-bot', { username, host, port, version });
+
+  // Clear inputs
+  document.getElementById('inp-username').value = '';
+  document.getElementById('inp-host').value     = '';
+}
+
+// ══ REMOVE BOT ══════════════════════════════════════════════════════════
+function removeBot(id) {
+  socket.emit('remove-bot', { id });
+}
+
+// ══ RENDER / UPDATE BOT CARD ═══════════════════════════════════════════
+function renderBotCard(id) {
+  const grid  = document.getElementById('bots-grid');
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.style.display = 'none';
+
+  const div = document.createElement('div');
+  div.className   = 'glass bot-card';
+  div.id          = `card-${id}`;
+  div.innerHTML   = buildCardHTML(id);
+  grid.appendChild(div);
+}
+
+function updateBotCard(id) {
+  const card = document.getElementById(`card-${id}`);
+  if (!card) { renderBotCard(id); return; }
+  card.innerHTML = buildCardHTML(id);
+}
+
+function buildCardHTML(id) {
+  const b = botStore[id];
+  if (!b) return '';
+
+  const status   = b.status || 'connecting';
+  const health   = typeof b.health === 'number' ? b.health : 0;
+  const food     = typeof b.food   === 'number' ? b.food   : 0;
+  const hPct     = (health / 20).toFixed(4);
+  const fPct     = ((food / 20) * 100).toFixed(1);
+  const pos      = b.position || { x:0, y:0, z:0 };
+
+  // Status color for the left glow strip
+  const statusColors = {
+    online:     '#10b981',
+    connecting: '#f59e0b',
+    offline:    '#6b7280',
+    dead:       '#6b7280',
+    kicked:     '#f43f5e',
+    error:      '#f43f5e',
+  };
+  const statusColor = statusColors[status] || '#6b7280';
+
+  // Health bar color text
+  const hColor = health > 14 ? '#6ee7b7' : health > 7 ? '#fcd34d' : '#fda4af';
+
+  const chatMsg = b.chatMessage
+    ? `<div class="chat-log has-msg">💬 ${escapeHTML(b.chatMessage)}</div>`
+    : `<div class="chat-log"></div>`;
+
+  const errorNote = b.errorMsg
+    ? `<div style="font-size:0.72rem;color:#fda4af;background:rgba(244,63,94,0.1);border-radius:8px;padding:0.4rem 0.6rem;border:1px solid rgba(244,63,94,0.25);">⚠️ ${escapeHTML(String(b.errorMsg).substring(0,80))}</div>`
+    : '';
+
+  return `
+    <style>#card-${CSS.escape(id)}{--status-color:${statusColor}}</style>
+    <div class="bot-card-header">
+      <div class="bot-avatar">🤖</div>
+      <div class="bot-name-group">
+        <div class="bot-username">${escapeHTML(b.username)}</div>
+        <div class="bot-server">${escapeHTML(b.host)}:${b.port}</div>
+        <div style="margin-top:0.4rem;">
+          <span class="status-badge status-${status}">
+            <span class="status-dot"></span>${status.toUpperCase()}
+          </span>
+          <span style="font-size:0.7rem;color:var(--text-muted);margin-left:0.5rem;">v${escapeHTML(b.version||'?')}</span>
+        </div>
+      </div>
+      <div class="bot-actions">
+        <button class="btn btn-danger" onclick="removeBot('${id}')">✕</button>
+      </div>
+    </div>
+
+    <div class="health-section">
+      <div class="health-header">
+        <span class="health-label">❤️ Health</span>
+        <span class="health-value" style="color:${hColor}">${health.toFixed(1)} / 20</span>
+      </div>
+      <div class="health-bar-track">
+        <div class="health-bar-fill" style="--pct:${hPct};width:${(hPct*100).toFixed(1)}%"></div>
+      </div>
+      <div class="food-header" style="margin-top:0.5rem;">
+        <span class="food-label">🍗 Food</span>
+        <span class="food-value">${food.toFixed(0)} / 20</span>
+      </div>
+      <div class="food-bar-track">
+        <div class="food-bar-fill" style="width:${fPct}%"></div>
+      </div>
+    </div>
+
+    <div class="position-row">
+      <div class="pos-chip"><div class="axis">X</div><div class="val">${pos.x}</div></div>
+      <div class="pos-chip"><div class="axis">Y</div><div class="val">${pos.y}</div></div>
+      <div class="pos-chip"><div class="axis">Z</div><div class="val">${pos.z}</div></div>
+    </div>
+
+    ${chatMsg}
+    ${errorNote}
+  `;
+}
+
+// ══ STATS BAR ══════════════════════════════════════════════════════════
+function updateStats() {
+  const bots = Object.values(botStore);
+  const online     = bots.filter(b => b.status === 'online').length;
+  const connecting = bots.filter(b => b.status === 'connecting').length;
+  const offline    = bots.filter(b => ['offline','dead','kicked','error'].includes(b.status)).length;
+
+  document.getElementById('stat-total').textContent     = bots.length;
+  document.getElementById('stat-online').textContent    = online;
+  document.getElementById('stat-connecting').textContent = connecting;
+  document.getElementById('stat-offline').textContent   = offline;
+
+  // Show empty state if no bots
+  const empty = document.getElementById('empty-state');
+  const grid  = document.getElementById('bots-grid');
+  if (empty) empty.style.display = bots.length === 0 ? 'block' : 'none';
+}
+
+// ══ TOAST ══════════════════════════════════════════════════════════════
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = msg;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 3100);
+}
+
+// ══ UTILS ══════════════════════════════════════════════════════════════
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+// ── Allow Enter key in form inputs ────────────────────────────────────
+['inp-username','inp-host','inp-port'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') addBot();
+  });
+});
+
+// Initial stats render
+updateStats();
+</script>
+
+</body>
+</html>
